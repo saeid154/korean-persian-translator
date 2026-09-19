@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Korean ⇄ Persian Live Translator</title>
+
+<!-- Makes "Add to Home Screen" open full-screen like a native app on iOS -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b1220">
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="lang-bar">
+  <span id="srcLangLabel" class="lang-label">Korean</span>
+  <button id="swapBtn" class="swap-btn" aria-label="Swap direction" type="button">⇄</button>
+  <span id="tgtLangLabel" class="lang-label">Persian</span>
+</header>
+
+<p id="status" class="status">Tap the microphone to start.</p>
+
+<main>
+  <section class="live-panel">
+    <p id="sourceLive" class="live-text src"></p>
+    <p id="targetLive" class="live-text dst"></p>
+  </section>
+
+  <section id="transcript" class="transcript" aria-live="polite"></section>
+</main>
+
+<footer>
+  <button id="micBtn" class="mic-btn" type="button" aria-label="Start listening">🎤</button>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
