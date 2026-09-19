@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Korean ⇄ Persian Live Translator</title>
+<title>Korean ⇄ Persian Offline Translator</title>
 
 <!-- Makes "Add to Home Screen" open full-screen like a native app on iOS -->
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -21,7 +21,10 @@
   <span id="tgtLangLabel" class="lang-label">Persian</span>
 </header>
 
-<p id="status" class="status">Tap the microphone to start.</p>
+<p id="status" class="status">Loading on-device models the first time you use this needs Wi-Fi and can take a few minutes.</p>
+<div id="progressWrap" class="progress-wrap" hidden>
+  <div id="progressBar" class="progress-bar"></div>
+</div>
 
 <main>
   <section class="live-panel">
@@ -33,10 +36,9 @@
 </main>
 
 <footer>
-  <button id="micBtn" class="mic-btn" type="button" aria-label="Start listening">🎤</button>
+  <button id="micBtn" class="mic-btn" type="button" aria-label="Start listening" disabled>🎤</button>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
-<script src="app.js"></script>
+<script src="app.js" type="module"></script>
 </body>
 </html>

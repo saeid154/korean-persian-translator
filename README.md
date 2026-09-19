@@ -1,154 +1,160 @@
-# Korean ⇄ Persian Live Translator
+# Korean ⇄ Persian Offline Translator
 
-A web app (works in iPhone Safari, no Mac/Xcode needed) that listens to
-speech, shows a live rough translation while you're still talking, and
-replaces it with a corrected translation once the sentence is finalized.
-Speaks the translation aloud using the phone's built-in voices.
+A fully self-contained web app (works in iPhone Safari) that listens to
+speech and translates between Korean and Persian — **with no server, no
+account, no API key, and no ongoing cost.** Everything runs inside the
+browser on your phone: speech recognition, translation, and even the
+spoken output.
 
-## How it works
+This is a deliberate rebuild after an earlier version of this project used
+a cloud AI service (Azure) behind a small backend server. That worked well
+and was cheap, but it wasn't "independent" — it needed a hosted server and
+an external company's account/keys. This version needs none of that, at
+the cost of lower accuracy and a chunkier (not word-by-word) live update.
 
-```
-iPhone Safari  ── mic audio (direct, wss) ──►  Azure Speech (speech-to-text)
-      │                                              │
-      │◄── interim + final transcript ───────────────┘
-      │
-      │── text to translate ──►  your Node server ──►  Azure Translator
-      │◄── translated text ───────────┘
-```
+## How it works — and why it needs no server
 
-- The browser talks to Azure Speech **directly** over a secure WebSocket
-  using a short-lived token (10 minutes) — this keeps latency low and is
-  Microsoft's recommended pattern for browser apps.
-- The browser talks to **your own server** for translation. Your server
-  holds the real Azure Translator key and forwards the request — the key
-  never reaches the phone.
-- While you're mid-sentence, Azure sends "recognizing" (interim) events;
-  each one is translated and shown immediately (throttled to ~3/sec so it
-  doesn't spam the API). When Azure emits the final "recognized" event for
-  the complete sentence, that clean text is re-translated and replaces the
-  live guess — that's the "live, then corrected" behavior you asked for.
-- Tap the ⇄ button to flip direction (Korean→Persian or Persian→Korean).
-  A fixed direction (rather than auto-detecting the spoken language) keeps
-  recognition accuracy high — telling Azure "expect Korean" vs. "expect
-  Persian" matters a lot for accuracy.
-
-## Why Azure for both pieces
-
-| Need | Service | Why |
+| Piece | Runs where | Technology |
 |---|---|---|
-| Streaming speech-to-text, ko-KR + fa-IR, interim results | **Azure Speech** | Free tier: 5 audio-hours/month forever, then ~$1/hour. Confirmed streaming support for both languages. |
-| Text translation, ko ↔ fa | **Azure Translator** | Free tier: 2,000,000 characters/month forever, then ~$10/million chars. |
+| Speech-to-text | **In the browser**, on your phone's CPU | [Whisper](https://github.com/openai/whisper) (multilingual), via [Transformers.js](https://huggingface.co/docs/transformers.js) |
+| Translation | **In the browser**, on your phone's CPU | [NLLB-200](https://ai.meta.com/research/no-language-left-behind/) (Meta's 200-language translation model), via Transformers.js |
+| Spoken output | **In the browser** | The phone's own built-in `speechSynthesis` API |
 
-For light personal use (a few hours a week of talking) this will likely
-stay **$0/month**, permanently — both free tiers renew every month, they're
-not a one-time trial. Heavier daily use (say an hour a day) is still only
-roughly $5–10/month combined. I picked Azure over Google Cloud because
-Google's generous-looking free tier is a 90-day trial credit, not
-recurring, and Azure's Translator free tier alone is larger than most
-personal usage will ever need.
+Transformers.js runs real ONNX model files directly in JavaScript using
+WebAssembly. The **only** network activity this app ever does is
+downloading those model weight files once, from Hugging Face's public CDN
+— the same way any other asset (like a font or an image) would load. After
+that first download, the browser caches the files (Cache Storage API) and
+the app works with **no internet connection at all**, forever, until you
+clear Safari's site data.
 
-If you ever outgrow the Speech free tier, a cheaper (but non-streaming)
-fallback for speech-to-text is OpenAI's transcription API (~$0.003–0.006
-per minute); it would need short recorded chunks instead of continuous
-interim results, so it's a rougher live experience — worth it only if cost
-becomes the binding constraint.
+There is no piece of this that talks to Azure, OpenAI, Google, or anyone
+else's server at runtime. The code in this repo is the entire app.
 
-## Keeping your API keys safe
+## The real trade-offs of going fully offline
 
-1. **Keys never go in client-side code.** Anything shipped to Safari
-   (HTML/CSS/JS) is visible to anyone via "View Source" — so the Azure
-   Speech key and Translator key live only in server environment
-   variables (`server/.env` locally, host secrets in production), never in
-   `public/`.
-2. **The browser gets a scoped, short-lived token, not the real key**, for
-   speech (`/api/speech-token` mints a 10-minute Azure token). If someone
-   intercepted it, it expires quickly and only grants speech access.
-3. **`server/.env` is git-ignored** (see `.gitignore`) so it can't be
-   committed by accident. `server/.env.example` is the template — copy it,
-   don't rename it.
-4. **A shared app password** (`APP_PASSWORD`) gates every `/api/*` route.
-   The web app asks for it once (stored in `localStorage`) and sends it as
-   an `x-app-key` header. Without this, anyone who discovered your app's
-   URL could make translation/speech requests on your Azure bill.
-5. **Rate limiting** (60 requests/min per IP) on all `/api/*` routes caps
-   the damage even if the password leaks.
-6. If a key ever leaks, rotate it immediately in the Azure Portal (Keys
-   and Endpoint blade) — this instantly invalidates the old one.
+Be aware of what you're giving up compared to a cloud-based version:
 
-## Running it locally
+1. **Not truly word-by-word live.** Whisper isn't a streaming model — it
+   transcribes a chunk of audio at a time. This app fakes "live" by
+   re-transcribing the audio captured so far roughly every 1.5 seconds
+   while you're talking (using simple volume-based silence detection to
+   know when a sentence has ended), so text updates in short bursts rather
+   than continuously. When it detects ~0.7s of silence, it treats that as
+   the end of a sentence, does one final transcription + translation pass,
+   and that's what gets spoken aloud and logged.
+2. **Lower accuracy, especially for Persian.** Whisper's training data
+   skews toward higher-resource languages; Persian recognition will be
+   noticeably rougher than Korean. NLLB-200 handles the ko↔fa pair
+   reasonably but won't match a large cloud translation service.
+3. **A real first-run cost.** The two models together are roughly
+   150–700MB depending on the sizes you pick (defaults below aim for a
+   reasonable middle ground). This downloads once — do it on Wi-Fi.
+4. **CPU-only.** iOS Safari's WebAssembly runtime for these models
+   currently has no working GPU acceleration path (`onnxruntime-web`'s
+   WebGPU backend isn't supported on iOS regardless of browser, and there
+   are open bug reports of it hanging/crashing pages when attempted). This
+   app deliberately never tries WebGPU and forces CPU (WASM) execution —
+   slower, but far more likely to actually work.
+5. **This is genuinely experimental on iOS Safari.** In-browser ML on
+   iPhone is a fast-moving, occasionally buggy area — there are open,
+   unresolved GitHub issues about Whisper-in-the-browser misbehaving on
+   iOS Safari specifically (crashes, stuck loading, cache errors). I've
+   built around the known causes I could find (no WebGPU, inference in a
+   Web Worker off the main thread, quantized/smaller models to reduce
+   memory pressure, and clear on-screen errors instead of silent hangs),
+   but **I have not been able to test this on a real iPhone myself** — I
+   only validated it in a desktop headless browser. If something breaks
+   the first time you try it, that's expected territory for this kind of
+   app right now, not necessarily something wrong with the setup — see
+   Troubleshooting below, and tell me what you see so we can fix it.
+
+If, after trying this, the accuracy or reliability doesn't work for you,
+the earlier Azure-based version (real streaming, much better accuracy, a
+few dollars a month at most) is a reasonable fallback — just say so.
+
+## Running it
+
+There's no build step and nothing to install. It's plain HTML/CSS/JS.
+
+**Locally, on a computer**, for a quick sanity check of the UI (mic access
+works on `http://localhost` without HTTPS):
 
 ```bash
-cd server
-cp .env.example .env      # then fill in your real Azure keys + a password
-npm install
-npm start
+python3 -m http.server 8000
+# open http://localhost:8000 in a browser
 ```
 
-Open `http://localhost:3000` in a desktop browser to sanity-check the UI.
-(Full mic testing is easiest once it's deployed with HTTPS — see below;
-Safari also allows mic access on `http://localhost` if you want to try
-Safari's iOS Simulator or a Mac browser first.)
+**On your iPhone**, you need HTTPS, so you need to actually host it
+somewhere — see below.
 
-### Getting Azure keys
+## Hosting so you can open it on your iPhone — GitHub Pages (free, no account setup beyond GitHub)
 
-1. Create a free account at https://portal.azure.com.
-2. Create a **Speech** resource (search "Speech" in "Create a resource").
-   Pick the **F0 (free)** pricing tier if offered. Note its **Key** and
-   **Region** from the resource's "Keys and Endpoint" page.
-3. Create a **Translator** resource the same way (search "Translator").
-   Again pick the **F0 (free)** tier. Note its **Key** and **Region**.
-4. Put those four values plus a password you invent into `server/.env`
-   (or your host's environment variable settings).
+Since this is now a 100%-static site, GitHub Pages is the simplest host —
+it's free, gives you HTTPS automatically (required for microphone access),
+and needs no server code, build step, or environment variables.
 
-## Deploying so you can open it on your iPhone
-
-Mic access requires HTTPS (or localhost), so you need to actually deploy
-this rather than just opening the HTML file. **Render.com** has a free web
-service tier with automatic HTTPS and is the simplest option:
-
-1. Push this repository to GitHub (already set up if you're reading this
-   from the repo).
-2. Go to https://render.com, sign up/log in, click **New +** → **Web
-   Service**, and connect this GitHub repo.
-3. Configure it:
-   - **Root Directory:** `server`
-   - **Build Command:** `npm install`
-   - **Start Command:** `npm start`
-4. Under **Environment**, add the 5 variables from `server/.env.example`
-   (`AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, `AZURE_TRANSLATOR_KEY`,
-   `AZURE_TRANSLATOR_REGION`, `APP_PASSWORD`) with your real values.
-5. Click **Create Web Service**. Render builds and gives you a URL like
-   `https://your-app-name.onrender.com`.
-
-Note: Render's free tier spins the service down after 15 minutes of
-inactivity, so the first request after a while takes ~30–50 seconds to
-wake up. That's a fine trade-off for a personal app; if it bothers you,
-Render's paid $7/month instance (or a small Fly.io VM) stays always-on.
+1. Push this repository to GitHub (if you're reading this from the repo,
+   it's likely already there).
+2. On GitHub, go to your repo → **Settings** → **Pages**.
+3. Under **Build and deployment**, set **Source** to "Deploy from a
+   branch," pick the branch this code is on, and folder `/ (root)`.
+4. Save. GitHub gives you a URL like
+   `https://<your-username>.github.io/<repo-name>/`. It can take a minute
+   or two to go live after the first save.
 
 ### Opening it on your iPhone 14 Pro
 
-1. Open Safari and go to your Render URL.
-2. Allow microphone access when prompted.
-3. Enter the app password you set as `APP_PASSWORD` (asked once, then
-   remembered).
-4. Tap the Share icon → **Add to Home Screen** to get an app-like icon
-   that opens full-screen without Safari's address bar.
+1. Open Safari and go to your GitHub Pages URL.
+2. Tap the mic — Safari will ask for microphone permission; allow it.
+3. Wait for the one-time model download (you'll see a progress bar). Do
+   this on Wi-Fi the first time.
+4. Once it says "Ready," tap the mic and talk. Tap ⇄ to flip direction
+   between Korean→Persian and Persian→Korean.
+5. Tap the Share icon → **Add to Home Screen** for an app-like icon that
+   opens full-screen without Safari's address bar.
 
-## Known limitations / good next upgrades
+## Tuning it (in `model-worker.js`)
 
-- **Direction is manual, not auto-detected.** Tap ⇄ before the other
-  person starts speaking. Auto-detecting Korean vs. Persian mid-stream is
-  possible with Azure's `AutoDetectSourceLanguageConfig`, but it doesn't
-  reliably know the language until a phrase finishes, which would make the
-  *interim* (live) results unreliable — not worth the trade-off for a v1.
-- **Spoken output uses the phone's free built-in voice**, not a cloud
-  neural voice. If Persian TTS quality/availability on-device isn't good
-  enough, Azure also offers cloud text-to-speech (`fa-IR` neural voices)
-  for a small additional cost — same auth pattern (short-lived token) would
-  apply.
-- **No offline mode** — this always needs a network connection since both
-  STT and MT are cloud calls.
-- For noticeably better translation quality/nuance on the *final* (not
-  live) pass, swapping the last translation call per sentence for an LLM
-  (e.g. Claude or GPT-4o-mini) is a straightforward upgrade — call it only
-  on the final event, not every interim update, to keep cost low.
+Two constants at the top control model size/quality/speed:
+
+```js
+const ASR_MODEL = 'Xenova/whisper-base';            // speech-to-text
+const TRANSLATION_MODEL = 'Xenova/nllb-200-distilled-600M'; // translation
+```
+
+- For faster, smaller, less accurate: try `Xenova/whisper-tiny`.
+- For slower, larger, more accurate: try `Xenova/whisper-small`.
+- NLLB-200-distilled-600M is Meta's smallest official distilled NLLB
+  model; there isn't a well-established smaller drop-in for this exact
+  language pair without giving up either Korean or Persian coverage.
+
+Voice-activity tuning is in `app.js` near the top:
+`SILENCE_RMS` (how quiet counts as silence — raise this if it cuts you off
+mid-sentence in a noisy room, lower it if it never detects silence),
+`SILENCE_DURATION_MS` (how long a pause means "sentence over"), and
+`INTERIM_INTERVAL_MS` (how often it tries a live update while you talk —
+the app already skips a scheduled update if the previous one hasn't
+finished, so on a slower phone updates will naturally come less often
+rather than piling up).
+
+## Troubleshooting
+
+- **Stuck on "Loading on-device models…" forever:** check the browser
+  console (on iPhone: Settings → Safari → Advanced → Web Inspector, then
+  inspect from a Mac; or just watch the on-screen status text, which now
+  shows the real error) — this app is built to show a real error message
+  here (e.g. a network problem) rather than hang silently, so whatever it
+  says is the actual cause.
+- **Page reloads itself repeatedly / goes blank:** this matches a known
+  class of iOS-Safari-specific crashes reported against Whisper-in-browser
+  setups. Try `Xenova/whisper-tiny` (smaller, less memory pressure) in
+  `model-worker.js`, and make sure Safari has been recently updated.
+- **It mishears everything:** make sure the ⇄ toggle matches who's
+  speaking — Korean recognition and Persian recognition are separate modes
+  and each expects the language it's set to.
+- **Translation quality is poor for uncommon phrases:** this is the
+  expected quality ceiling of a compact on-device model; there is no
+  further "correction pass" here like a cloud LLM could provide, since
+  that would require a network call to some external service, which is
+  exactly what this version avoids.
