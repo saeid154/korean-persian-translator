@@ -116,18 +116,24 @@ and needs no server code, build step, or environment variables.
 
 ## Tuning it (in `model-worker.js`)
 
-Two constants at the top control model size/quality/speed:
-
 ```js
-const ASR_MODEL = 'Xenova/whisper-base';            // speech-to-text
+const ASR_MODEL = 'Xenova/whisper-tiny';            // speech-to-text
 const TRANSLATION_MODEL = 'Xenova/nllb-200-distilled-600M'; // translation
 ```
 
-- For faster, smaller, less accurate: try `Xenova/whisper-tiny`.
-- For slower, larger, more accurate: try `Xenova/whisper-small`.
+These defaults were cut down from `whisper-base` + 8-bit translation after
+real on-iPhone testing showed that combination crashing mobile Safari's tab
+(out of memory) — the translation model now loads at 4-bit instead. This
+is the safer starting point, not the most accurate one:
+
+- For better accuracy at higher memory risk: try `Xenova/whisper-small`,
+  or bump the translation `dtype` in `model-worker.js` back to `'q8'`.
+  Change one at a time and retest on your actual phone, since the crash
+  only shows up under real memory pressure, not in normal testing.
 - NLLB-200-distilled-600M is Meta's smallest official distilled NLLB
   model; there isn't a well-established smaller drop-in for this exact
-  language pair without giving up either Korean or Persian coverage.
+  language pair without giving up either Korean or Persian coverage, which
+  is why it's quantized more aggressively instead of swapped out.
 
 Voice-activity tuning is in `app.js` near the top:
 `SILENCE_RMS` (how quiet counts as silence — raise this if it cuts you off
@@ -146,10 +152,16 @@ rather than piling up).
   shows the real error) — this app is built to show a real error message
   here (e.g. a network problem) rather than hang silently, so whatever it
   says is the actual cause.
-- **Page reloads itself repeatedly / goes blank:** this matches a known
-  class of iOS-Safari-specific crashes reported against Whisper-in-browser
-  setups. Try `Xenova/whisper-tiny` (smaller, less memory pressure) in
-  `model-worker.js`, and make sure Safari has been recently updated.
+- **Safari shows "A problem repeatedly occurred" / the tab reloads itself
+  / it re-downloads every time:** this is Safari killing the tab for
+  running out of memory — confirmed on real-device testing with the
+  original `whisper-base` + 8-bit translation combo, which is why the
+  defaults above are smaller now. If it still happens: close other Safari
+  tabs and apps to free memory before opening the app, and if that's not
+  enough, the translation model is the heavier of the two — there isn't
+  a much smaller drop-in for it (see Tuning above), so the next step would
+  be accepting lower ASR accuracy by keeping `whisper-tiny` and not
+  raising anything back up.
 - **It mishears everything:** make sure the ⇄ toggle matches who's
   speaking — Korean recognition and Persian recognition are separate modes
   and each expects the language it's set to.

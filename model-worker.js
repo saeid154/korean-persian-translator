@@ -15,10 +15,17 @@
 // onmessage handler never registered at all.
 const TRANSFORMERS_CDN_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0';
 
-// Swap these for bigger/more accurate (but slower, larger-download) models
-// once you've tried the defaults on your phone. Multilingual (no ".en"
-// suffix) Whisper models are required since we need Korean and Persian.
-const ASR_MODEL = 'Xenova/whisper-base';
+// Swap these for bigger/more accurate (but slower, larger-download, more
+// memory-hungry) models once you've confirmed the defaults are stable on
+// your phone. Multilingual (no ".en" suffix) Whisper models are required
+// since we need Korean and Persian.
+//
+// Kept deliberately small: whisper-base (~150-300MB) + nllb-200-distilled-
+// 600M at 8-bit (~600MB+) held in memory at the same time was enough to
+// crash mobile Safari's tab (out of memory) during initial testing. tiny +
+// 4-bit translation weights cut that combined footprint dramatically, at
+// the cost of accuracy - this is the safer starting point.
+const ASR_MODEL = 'Xenova/whisper-tiny';
 const TRANSLATION_MODEL = 'Xenova/nllb-200-distilled-600M';
 
 // Language tags each model expects.
@@ -46,9 +53,19 @@ async function loadModels() {
     pipeline = mod.pipeline;
     mod.env.allowLocalModels = false;
   }
-  const commonOptions = { dtype: 'q8', device: 'wasm', progress_callback: reportProgress };
-  asrPipeline = await pipeline('automatic-speech-recognition', ASR_MODEL, commonOptions);
-  translationPipeline = await pipeline('translation', TRANSLATION_MODEL, commonOptions);
+  // whisper-tiny is small enough that 8-bit is fine. The 600M translation
+  // model is the big one, so it gets the more aggressive 4-bit quantization
+  // to keep combined resident memory down.
+  asrPipeline = await pipeline('automatic-speech-recognition', ASR_MODEL, {
+    dtype: 'q8',
+    device: 'wasm',
+    progress_callback: reportProgress,
+  });
+  translationPipeline = await pipeline('translation', TRANSLATION_MODEL, {
+    dtype: 'q4',
+    device: 'wasm',
+    progress_callback: reportProgress,
+  });
   loaded = true;
 }
 
