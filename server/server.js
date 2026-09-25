@@ -53,6 +53,21 @@ app.use('/api', requireAppKey);
 const ALLOWED_LANGS = new Set(['ko', 'fa']);
 const LANG_NAMES = { ko: 'Korean', fa: 'Persian' };
 
+// Turns an OpenAI HTTP status into a message the phone can show, so a bad
+// key or empty balance is obvious without digging through server logs.
+function openaiFailureMessage(action, status) {
+  if (status === 401) return `${action} failed: OpenAI rejected the API key (check OPENAI_API_KEY on Render)`;
+  if (status === 429) return `${action} failed: OpenAI balance empty or rate limited (check billing on platform.openai.com)`;
+  return `${action} failed${status ? ` (OpenAI error ${status})` : ''}`;
+}
+
+async function openaiError(label, openaiRes) {
+  const detail = await openaiRes.text().catch(() => '');
+  const err = new Error(`OpenAI ${label} failed: ${openaiRes.status} ${detail.slice(0, 200)}`);
+  err.status = openaiRes.status;
+  return err;
+}
+
 const EXT_FOR_MIME = {
   'audio/mp4': 'mp4',
   'audio/webm': 'webm',
@@ -85,15 +100,12 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
       body: form,
     });
-    if (!openaiRes.ok) {
-      const detail = await openaiRes.text().catch(() => '');
-      throw new Error(`OpenAI transcription failed: ${openaiRes.status} ${detail.slice(0, 200)}`);
-    }
+    if (!openaiRes.ok) throw await openaiError('transcription', openaiRes);
     const data = await openaiRes.json();
     res.json({ text: (data.text || '').trim() });
   } catch (err) {
     console.error(err);
-    res.status(502).json({ error: 'Transcription failed' });
+    res.status(502).json({ error: openaiFailureMessage('Transcription', err.status) });
   }
 });
 
@@ -129,16 +141,13 @@ app.post('/api/translate', async (req, res) => {
         ],
       }),
     });
-    if (!openaiRes.ok) {
-      const detail = await openaiRes.text().catch(() => '');
-      throw new Error(`OpenAI translation failed: ${openaiRes.status} ${detail.slice(0, 200)}`);
-    }
+    if (!openaiRes.ok) throw await openaiError('translation', openaiRes);
     const data = await openaiRes.json();
     const translation = data.choices?.[0]?.message?.content?.trim() || '';
     res.json({ translation });
   } catch (err) {
     console.error(err);
-    res.status(502).json({ error: 'Translation failed' });
+    res.status(502).json({ error: openaiFailureMessage('Translation', err.status) });
   }
 });
 

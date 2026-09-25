@@ -10,7 +10,11 @@ let listening = false;
 
 // --- Voice-activity detection tuning ---
 const VAD_INTERVAL_MS = 100;
-const SILENCE_RMS = 0.02;
+// Speech = louder than 3x the room's measured background noise, with a low
+// absolute floor. A fixed threshold proved too high for quiet mics with
+// iOS noise suppression on.
+const MIN_SPEECH_RMS = 0.008;
+const NOISE_FLOOR_START = 0.003;
 const SILENCE_DURATION_MS = 700;
 const SEGMENT_INTERVAL_MS = 2000; // how often to flush a growing utterance for a live update
 const MIN_SPEECH_MS = 400; // ignore blips shorter than this
@@ -25,6 +29,7 @@ let speaking = false;
 let silenceMs = 0;
 let segmentMs = 0;
 let speechMsTotal = 0;
+let noiseFloor = NOISE_FLOOR_START;
 let currentUtterance = null; // { segments: [] } - see startSegmentRecorder
 
 const statusEl = document.getElementById('status');
@@ -35,6 +40,7 @@ const tgtLangLabel = document.getElementById('tgtLangLabel');
 const sourceLiveEl = document.getElementById('sourceLive');
 const targetLiveEl = document.getElementById('targetLive');
 const transcriptEl = document.getElementById('transcript');
+const levelBar = document.getElementById('levelBar');
 
 function getAppKey() {
   let key = localStorage.getItem(APP_KEY_STORAGE);
@@ -223,7 +229,9 @@ function finalizeUtterance() {
 }
 
 function handleVadSample(rms) {
-  if (rms > SILENCE_RMS) {
+  const isSpeech = rms > Math.max(MIN_SPEECH_RMS, noiseFloor * 3);
+  if (!isSpeech && !speaking) noiseFloor = noiseFloor * 0.9 + rms * 0.1;
+  if (isSpeech) {
     if (!speaking) statusEl.textContent = `Speaking detected (${getSourceLang().label})…`;
     speaking = true;
     silenceMs = 0;
@@ -250,25 +258,43 @@ function startVadLoop() {
       const v = (data[i] - 128) / 128;
       sumSquares += v * v;
     }
-    handleVadSample(Math.sqrt(sumSquares / data.length));
+    const rms = Math.sqrt(sumSquares / data.length);
+    levelBar.style.width = `${Math.min(100, (rms / 0.1) * 100)}%`;
+    handleVadSample(rms);
   }, VAD_INTERVAL_MS);
 }
 
 async function startListening() {
+  // iOS Safari only lets an AudioContext run if it's created and resumed
+  // synchronously inside the tap; creating it after awaiting mic permission
+  // leaves it suspended and the analyser reads pure silence forever.
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume();
+
   statusEl.textContent = 'Requesting microphone…';
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  await audioCtx.resume();
+  if (audioCtx.state !== 'running') {
+    throw new Error(`audio engine is ${audioCtx.state} - tap the mic again`);
+  }
 
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const source = audioCtx.createMediaStreamSource(mediaStream);
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 1024;
   source.connect(analyser);
+  // WebKit may skip processing nodes that don't lead to the destination, so
+  // route the analyser into a muted gain node to keep it fed with samples.
+  const mute = audioCtx.createGain();
+  mute.gain.value = 0;
+  analyser.connect(mute);
+  mute.connect(audioCtx.destination);
 
   currentUtterance = { segments: [] };
   speaking = false;
   silenceMs = 0;
   segmentMs = 0;
   speechMsTotal = 0;
+  noiseFloor = NOISE_FLOOR_START;
 
   startSegmentRecorder();
   startVadLoop();
@@ -287,6 +313,7 @@ function stopListening() {
     clearInterval(vadTimer);
     vadTimer = null;
   }
+  levelBar.style.width = '0%';
   if (recorder && recorder.state !== 'inactive') {
     recorder.onstop = null; // discard the trailing partial clip
     recorder.stop();
@@ -303,15 +330,23 @@ function stopListening() {
   currentUtterance = null;
 }
 
+function beginListening() {
+  startListening().catch((err) => {
+    console.error(err);
+    stopListening();
+    statusEl.textContent = `Microphone error: ${err.message}`;
+  });
+}
+
 micBtn.addEventListener('click', () => {
   if (listening) {
     stopListening();
-  } else {
-    startListening().catch((err) => {
-      statusEl.textContent = `Microphone error: ${err.message}`;
-      console.error(err);
-    });
+    return;
   }
+  // Ask for the password before audio starts: a prompt dialog popping up
+  // mid-recording can interrupt the audio session on iOS.
+  if (!getAppKey()) return;
+  beginListening();
 });
 
 swapBtn.addEventListener('click', () => {
@@ -321,11 +356,7 @@ swapBtn.addEventListener('click', () => {
   updateLangLabels();
   sourceLiveEl.textContent = '';
   targetLiveEl.textContent = '';
-  if (wasListening) {
-    startListening().catch((err) => {
-      statusEl.textContent = `Microphone error: ${err.message}`;
-    });
-  }
+  if (wasListening) beginListening();
 });
 
 updateLangLabels();

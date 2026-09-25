@@ -62,6 +62,22 @@ body {
   min-height: 16px;
 }
 
+.level-wrap {
+  margin: 8px auto 0;
+  width: 140px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.level-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.08s linear;
+}
+
 main {
   flex: 1;
   display: flex;
