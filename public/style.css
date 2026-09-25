@@ -62,21 +62,6 @@ body {
   min-height: 16px;
 }
 
-.progress-wrap {
-  margin: 8px 16px 0;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--panel);
-  overflow: hidden;
-}
-
-.progress-bar {
-  height: 100%;
-  width: 0%;
-  background: var(--accent);
-  transition: width 0.2s ease;
-}
-
 main {
   flex: 1;
   display: flex;
@@ -144,11 +129,6 @@ footer {
   background: var(--accent);
   color: white;
   font-size: 30px;
-}
-
-.mic-btn:disabled {
-  background: #3a4360;
-  opacity: 0.6;
 }
 
 .mic-btn.listening {
