@@ -189,9 +189,13 @@ async function handleSegmentBlob(blob, utterance) {
     setText(sourceLiveEl, combined, sourceLang);
     translate(combined, sourceLang.code, getTargetLang().code)
       .then((t) => setText(targetLiveEl, t, getTargetLang()))
-      .catch((err) => console.error(err));
+      .catch((err) => {
+        console.error(err);
+        statusEl.textContent = `Translation error: ${err.message}`;
+      });
   } catch (err) {
     console.error('Transcription error:', err);
+    statusEl.textContent = `Transcription error: ${err.message}`;
   }
 }
 
@@ -220,6 +224,7 @@ function finalizeUtterance() {
 
 function handleVadSample(rms) {
   if (rms > SILENCE_RMS) {
+    if (!speaking) statusEl.textContent = `Speaking detected (${getSourceLang().label})…`;
     speaking = true;
     silenceMs = 0;
     speechMsTotal += VAD_INTERVAL_MS;
